@@ -1,7 +1,9 @@
 # aws-assume-role
 A simplistic github action that opens a session using aws sts assume-role, and exports its creds to the GITHUB_ENV of the current session. No tricks, no shtics, no dark magic.
 
-The action is of type [*Composite*](https://docs.github.com/en/actions/creating-actions/about-custom-actions#composite-actions), and as such it assumes `aws-cli v2` and `jq` are present, for example - like they are for jobs that `runs-on: ubuntu-latest`.
+The action is of type [*Composite*](https://docs.github.com/en/actions/creating-actions/about-custom-actions#composite-actions), and as such it should work on non-linux workflows. 
+
+However, it assumes `aws-cli v2` and `jq` are present, for example - like they are present for jobs that use `runs-on: ubuntu-latest`.
 
 ## inputs:
 | parameter | type | default | details |
