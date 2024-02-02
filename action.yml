@@ -1,0 +1,114 @@
+name: 'Asume AWS role'
+description: |
+  Assumes AWS role and exposes the AWS creds to the GITHUB_ENV of the current session
+  A successful run concludes with the following variables updated:
+     - `AWS_ACCESS_KEY_ID`
+     - `AWS_SECRET_ACCESS_KEY`
+     - `AWS_SESSION_TOKEN`
+  (then or their $ENV_PREFIX equivalents...)
+inputs:
+  target-role-name:
+    description: |
+      the role name to assume.
+      e.g.: if your target role arn is `arn:aws:iam::000000000000:role/the-role`, then provide here just `the-role`.
+    required: false
+    default: ''
+  target-role-arn:  
+    description: Use in case you want to inject an explicit ARN. When provided - ignores `target-role` that is used to compose it.
+    required: false
+    default: ''
+  duration-seconds:
+    description: The parameter for aws sts assune-role. Defaults here to the minimum allowed (900 seconds = 15min)
+    default: '900'
+    required: true
+  session-name:
+    description: The session name to use. Defaults to `{current-user}-{commit-sha}@{target-role-name}`
+    required: false
+    default: ''
+  debug:
+    description: Increases verbosity with debug prints. Any value other than `false` will work. Default to `false`.
+    default: 'false'
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      env:
+        TARGET_ROLE_NAME: ${{ inputs.target-role-name }}
+        TARGET_ROLE_ARN: ${{ inputs.target-role-arn }}
+        DURATION_SECONDS: ${{ inputs.duration-seconds }}
+        TARGET_SESSION_NAME: ${{ inputs.session-name }}
+      run: |
+        #assume role
+        set -e;
+        if [ "false" = "${{ inputs.debug }}" ];
+        then debug() { return 0; };
+        else debug() { echo -e "[debug]" $*; };
+        fi;
+
+        CURRENT_IDENTITY_ARN=$(aws sts get-caller-identity | jq -r .Arn)
+        echo "
+        Current identity:
+            $CURRENT_IDENTITY_ARN
+        ";
+
+        if [ -z "$TARGET_ROLE_NAME$TARGET_ROLE_ARN" ]; then
+          >&2 echo "
+          Target ARN could not be resolved. 
+          Please provide either `target-role-name` or `target-role-arn`.
+          ";
+          exit 1;
+        fi;
+
+        if [ -z "$TARGET_ROLE_ARN" ]; then
+          debug "Composing TARGET_ROLE_ARN based on current identity and TARGET_ROLE_NAME: $TARGET_ROLE_NAME"
+          TARGET_ROLE_ARN="${CURRENT_IDENTITY_ARN%:*}:role/${TARGET_ROLE_NAME}";
+        else
+          debug "Parsing TARGET_ROLE_NAME fron TARGET_ROLE_ARN: $TARGET_ROLE_ARN "
+          [ -z "$TARGET_ROLE_NAME" ] && TARGET_ROLE_NAME="${TARGET_ROLE_ARN#*/}";
+        fi;
+
+        [ -z "$TARGET_SESSION_NAME" ] && TARGET_SESSION_NAME="${CURRENT_IDENTITY_ARN#*/}-${{ github.sha }}@${TARGET_ROLE_NAME}";
+
+        debug "
+        Using: 
+          TARGET_ROLE_NAME:     $TARGET_ROLE_NAME
+          TARGET_ROLE_ARN:      $TARGET_ROLE_ARN
+          TARGET_SESSION_NAME:  $TARGET_SESSION_NAME
+          DURATION_SECONDS:     $DURATION_SECONDS
+        ";
+
+        echo "
+        Getting AWS impersonation creds...";
+        JSON=$(\
+          aws sts assume-role \
+            --duration-seconds  "$DURATION_SECONDS" \
+            --role-session-name "$TARGET_SESSION_NAME" \
+            --role-arn          "$TARGET_ROLE_ARN" \
+        );
+
+        export AWS_ACCESS_KEY_ID=$(    echo "$JSON" | jq -r .Credentials.AccessKeyId );
+        export AWS_SECRET_ACCESS_KEY=$(echo "$JSON" | jq -r .Credentials.SecretAccessKey );
+        export AWS_SESSION_TOKEN=$(    echo "$JSON" | jq -r .Credentials.SessionToken );
+
+        debug "
+        Got creds (only 6 first chars are displayed):
+          AWS_ACCESS_KEY_ID:     ${AWS_ACCESS_KEY_ID:0:6}...
+          AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:0:6}...
+          AWS_SESSION_TOKEN:     ${AWS_SESSION_TOKEN:0:6}...
+          -------------------------------------------------
+          Expiration:            $(echo $JSON | jq -r .Credentials.Expiration)
+        ";
+
+        echo "
+        Current assumed identity:
+            $(aws sts get-caller-identity | jq -r .Arn)
+        ";
+
+        if [ -n "$AWS_ACCESS_KEY_ID" ]; then
+          echo "${ENV_PREFIX}AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}" >> $GITHUB_ENV
+          echo "${ENV_PREFIX}AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}" >> $GITHUB_ENV
+          echo "${ENV_PREFIX}AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}" >> $GITHUB_ENV
+          echo "::add-mask::${ENV_PREFIX}${AWS_ACCESS_KEY_ID}"
+          echo "::add-mask::${ENV_PREFIX}${AWS_SECRET_ACCESS_KEY}"
+          echo "::add-mask::${ENV_PREFIX}${AWS_SESSION_TOKEN}"
+        fi
