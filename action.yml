@@ -1,11 +1,6 @@
 name: 'Asume AWS role'
 description: |
   Assumes AWS role and exposes the AWS creds to the GITHUB_ENV of the current session
-  A successful run concludes with the following variables updated:
-     - `AWS_ACCESS_KEY_ID`
-     - `AWS_SECRET_ACCESS_KEY`
-     - `AWS_SESSION_TOKEN`
-  (then or their $ENV_PREFIX equivalents...)
 inputs:
   target-role-name:
     description: |
